@@ -11,15 +11,20 @@ substitutions:
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
-  includes:
-    - /config/fingerprint_sensor.h
   libraries:
     - "adafruit/Adafruit Fingerprint Sensor Library@^2.1.0"
+
+# Load external component
+external_components:
+  - source:
+      type: local
+      path: /config/components
+    components: [ fingerprint_sensor ]
 
 esp32:
   board: wemos_d1_mini32
   framework:
-    type: esp-idf
+    type: arduino
 
 
 wifi:
@@ -75,40 +80,33 @@ binary_sensor:
     id: doorbell_ring
     device_class: occupancy
     icon: "mdi:doorbell"
-    
-# Sensors exposed to Home Assistant
-sensor:
-  - platform: template
+
+# Fingerprint sensor component
+fingerprint_sensor:
+  id: fingerprint_component
+  uart_id: fingerprint_uart
+  match_id:
     name: "${friendly_name} Last Match ID"
     id: last_match_id
-    icon: "mdi:fingerprint"
-    accuracy_decimals: 0
-    
-  - platform: template
-    name: "${friendly_name} Match Confidence"
-    id: match_confidence
-    icon: "mdi:percent"
-    unit_of_measurement: "%"
-    accuracy_decimals: 0
-    
-  - platform: template
-    name: "${friendly_name} Enrolled Count"
-    id: enrolled_count
-    icon: "mdi:counter"
-    accuracy_decimals: 0
-
-# Text sensors for names and status
-text_sensor:
-  - platform: template
+  match_name:
     name: "${friendly_name} Last Match Name"
     id: last_match_name
-    icon: "mdi:account"
-    
-  - platform: template
+  confidence:
+    name: "${friendly_name} Match Confidence"
+    id: match_confidence
+  enrolled_count:
+    name: "${friendly_name} Enrolled Count"
+    id: enrolled_count
+  status:
     name: "${friendly_name} Status"
     id: sensor_status
-    icon: "mdi:information"
+  ring:
+    name: "${friendly_name} Fingerprint Ring"
+    id: fingerprint_ring
+    internal: true
 
+# Additional info sensors
+text_sensor:
   - platform: version
     name: "${friendly_name} ESPHome Version"
 
@@ -135,15 +133,6 @@ output:
     pin: GPIO19
     id: doorbell_output
 
-# Custom component for fingerprint sensor
-custom_component:
-  - lambda: |-
-      auto fingerprint = new FingerprintSensor(id(fingerprint_uart));
-      App.register_component(fingerprint);
-      return {fingerprint};
-    components:
-      - id: fingerprint_component
-
 # Services for Home Assistant
 # These allow you to call actions from Home Assistant
 api:
@@ -160,8 +149,7 @@ api:
             format: "Starting enrollment for ID %d with name %s"
             args: [ 'finger_id', 'finger_name.c_str()' ]
         - lambda: |-
-            // Custom enrollment logic will be handled by the component
-            id(sensor_status).publish_state("Enrolling: Place finger on sensor");
+            id(fingerprint_component).enroll_fingerprint(finger_id, finger_name);
             
     # Delete a fingerprint
     - service: delete_fingerprint
@@ -172,15 +160,14 @@ api:
             format: "Deleting fingerprint ID %d"
             args: [ 'finger_id' ]
         - lambda: |-
-            // Custom delete logic
-            id(sensor_status).publish_state("Deleting fingerprint...");
+            id(fingerprint_component).delete_fingerprint(finger_id);
             
     # Clear all fingerprints
     - service: clear_all_fingerprints
       then:
         - logger.log: "Clearing all fingerprints from sensor"
         - lambda: |-
-            id(sensor_status).publish_state("Clearing database...");
+            id(fingerprint_component).clear_all();
 
 # Button entities for quick actions
 button:

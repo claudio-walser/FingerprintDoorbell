@@ -1,21 +1,26 @@
 #pragma once
 
-#include "esphome.h"
+#include "esphome/core/component.h"
+#include "esphome/components/uart/uart.h"
+#include "esphome/components/sensor/sensor.h"
+#include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include <Adafruit_Fingerprint.h>
 #include <Preferences.h>
 
-using namespace esphome;
+namespace esphome {
+namespace fingerprint_sensor {
 
-class FingerprintSensor : public Component, public UARTDevice {
+class FingerprintSensor : public Component, public uart::UARTDevice {
  public:
-  FingerprintSensor(UARTComponent *parent) : UARTDevice(parent) {}
+  FingerprintSensor() = default;
   
-  Sensor *match_id_sensor = new Sensor();
-  Sensor *confidence_sensor = new Sensor();
-  Sensor *enrolled_count_sensor = new Sensor();
-  TextSensor *match_name_sensor = new TextSensor();
-  TextSensor *status_sensor = new TextSensor();
-  BinarySensor *ring_sensor = new BinarySensor();
+  void set_match_id_sensor(sensor::Sensor *sensor) { match_id_sensor_ = sensor; }
+  void set_match_name_sensor(text_sensor::TextSensor *sensor) { match_name_sensor_ = sensor; }
+  void set_confidence_sensor(sensor::Sensor *sensor) { confidence_sensor_ = sensor; }
+  void set_enrolled_count_sensor(sensor::Sensor *sensor) { enrolled_count_sensor_ = sensor; }
+  void set_status_sensor(text_sensor::TextSensor *sensor) { status_sensor_ = sensor; }
+  void set_ring_sensor(binary_sensor::BinarySensor *sensor) { ring_sensor_ = sensor; }
   
   void setup() override {
     // Initialize preferences for storing fingerprint names
@@ -27,20 +32,24 @@ class FingerprintSensor : public Component, public UARTDevice {
     // Try to connect to sensor
     delay(50);
     if (finger_.verifyPassword()) {
-      ESP_LOGI("fingerprint", "Fingerprint sensor found!");
+      ESP_LOGI(TAG, "Fingerprint sensor found!");
       finger_.LEDcontrol(FINGERPRINT_LED_FLASHING, 25, FINGERPRINT_LED_BLUE, 0);
       
       // Get sensor parameters
       finger_.getParameters();
-      ESP_LOGI("fingerprint", "Capacity: %d", finger_.capacity);
-      ESP_LOGI("fingerprint", "Security level: %d", finger_.security_level);
+      ESP_LOGI(TAG, "Capacity: %d", finger_.capacity);
+      ESP_LOGI(TAG, "Security level: %d", finger_.security_level);
       
       // Get template count
       finger_.getTemplateCount();
-      ESP_LOGI("fingerprint", "Sensor contains %d templates", finger_.templateCount);
+      ESP_LOGI(TAG, "Sensor contains %d templates", finger_.templateCount);
       
-      enrolled_count_sensor->publish_state(finger_.templateCount);
-      status_sensor->publish_state("Ready");
+      if (enrolled_count_sensor_ != nullptr) {
+        enrolled_count_sensor_->publish_state(finger_.templateCount);
+      }
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Ready");
+      }
       connected_ = true;
       
       // Load fingerprint names from preferences
@@ -49,15 +58,17 @@ class FingerprintSensor : public Component, public UARTDevice {
       // Set LED to ready state
       finger_.LEDcontrol(FINGERPRINT_LED_BREATHING, 250, FINGERPRINT_LED_BLUE);
     } else {
-      ESP_LOGE("fingerprint", "Fingerprint sensor not found!");
+      ESP_LOGE(TAG, "Fingerprint sensor not found!");
       delay(5000);
       // Try again
       if (finger_.verifyPassword()) {
-        ESP_LOGI("fingerprint", "Fingerprint sensor found on second try!");
+        ESP_LOGI(TAG, "Fingerprint sensor found on second try!");
         connected_ = true;
         finger_.LEDcontrol(FINGERPRINT_LED_BREATHING, 250, FINGERPRINT_LED_BLUE);
       } else {
-        status_sensor->publish_state("Sensor not found!");
+        if (status_sensor_ != nullptr) {
+          status_sensor_->publish_state("Sensor not found!");
+        }
         connected_ = false;
         return;
       }
@@ -80,14 +91,18 @@ class FingerprintSensor : public Component, public UARTDevice {
   // Service: Enroll fingerprint
   void enroll_fingerprint(int id, const std::string &name) {
     if (!connected_) {
-      ESP_LOGE("fingerprint", "Sensor not connected!");
-      status_sensor->publish_state("Error: Sensor not connected");
+      ESP_LOGE(TAG, "Sensor not connected!");
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Error: Sensor not connected");
+      }
       return;
     }
     
     if (id < 1 || id > 200) {
-      ESP_LOGE("fingerprint", "Invalid ID: %d (must be 1-200)", id);
-      status_sensor->publish_state("Error: Invalid ID");
+      ESP_LOGE(TAG, "Invalid ID: %d (must be 1-200)", id);
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Error: Invalid ID");
+      }
       return;
     }
     
@@ -95,29 +110,37 @@ class FingerprintSensor : public Component, public UARTDevice {
     enroll_id_ = id;
     enroll_name_ = name;
     
-    ESP_LOGI("fingerprint", "Starting enrollment for ID %d with name '%s'", id, name.c_str());
-    status_sensor->publish_state("Enrollment started. Place finger on sensor 5 times...");
+    ESP_LOGI(TAG, "Starting enrollment for ID %d with name '%s'", id, name.c_str());
+    if (status_sensor_ != nullptr) {
+      status_sensor_->publish_state("Enrollment started. Place finger on sensor 5 times...");
+    }
     
     // Perform enrollment
     int result = perform_enrollment(id);
     
     if (result == 0) {
       // Success
-      ESP_LOGI("fingerprint", "Enrollment successful!");
+      ESP_LOGI(TAG, "Enrollment successful!");
       
       // Save name to preferences
       String key = String(id);
       preferences_.putString(key.c_str(), name.c_str());
       fingerprint_names_[id] = name;
       
-      status_sensor->publish_state("Enrollment successful!");
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Enrollment successful!");
+      }
       
       // Update count
       finger_.getTemplateCount();
-      enrolled_count_sensor->publish_state(finger_.templateCount);
+      if (enrolled_count_sensor_ != nullptr) {
+        enrolled_count_sensor_->publish_state(finger_.templateCount);
+      }
     } else {
-      ESP_LOGE("fingerprint", "Enrollment failed with code: %d", result);
-      status_sensor->publish_state("Enrollment failed!");
+      ESP_LOGE(TAG, "Enrollment failed with code: %d", result);
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Enrollment failed!");
+      }
     }
     
     enrolling_ = false;
@@ -129,63 +152,77 @@ class FingerprintSensor : public Component, public UARTDevice {
   // Service: Delete fingerprint
   void delete_fingerprint(int id) {
     if (!connected_) {
-      ESP_LOGE("fingerprint", "Sensor not connected!");
+      ESP_LOGE(TAG, "Sensor not connected!");
       return;
     }
     
     if (id < 1 || id > 200) {
-      ESP_LOGE("fingerprint", "Invalid ID: %d", id);
+      ESP_LOGE(TAG, "Invalid ID: %d", id);
       return;
     }
     
-    ESP_LOGI("fingerprint", "Deleting fingerprint ID %d", id);
+    ESP_LOGI(TAG, "Deleting fingerprint ID %d", id);
     
     uint8_t result = finger_.deleteModel(id);
     if (result == FINGERPRINT_OK) {
-      ESP_LOGI("fingerprint", "Fingerprint deleted successfully");
+      ESP_LOGI(TAG, "Fingerprint deleted successfully");
       
       // Remove from preferences
       String key = String(id);
       preferences_.remove(key.c_str());
       fingerprint_names_.erase(id);
       
-      status_sensor->publish_state("Fingerprint deleted");
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Fingerprint deleted");
+      }
       
       // Update count
       finger_.getTemplateCount();
-      enrolled_count_sensor->publish_state(finger_.templateCount);
+      if (enrolled_count_sensor_ != nullptr) {
+        enrolled_count_sensor_->publish_state(finger_.templateCount);
+      }
     } else {
-      ESP_LOGE("fingerprint", "Delete failed with code: %d", result);
-      status_sensor->publish_state("Delete failed!");
+      ESP_LOGE(TAG, "Delete failed with code: %d", result);
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Delete failed!");
+      }
     }
   }
   
   // Service: Clear all fingerprints
   void clear_all() {
     if (!connected_) {
-      ESP_LOGE("fingerprint", "Sensor not connected!");
+      ESP_LOGE(TAG, "Sensor not connected!");
       return;
     }
     
-    ESP_LOGI("fingerprint", "Clearing all fingerprints");
+    ESP_LOGI(TAG, "Clearing all fingerprints");
     
     uint8_t result = finger_.emptyDatabase();
     if (result == FINGERPRINT_OK) {
-      ESP_LOGI("fingerprint", "Database cleared successfully");
+      ESP_LOGI(TAG, "Database cleared successfully");
       
       // Clear preferences
       preferences_.clear();
       fingerprint_names_.clear();
       
-      status_sensor->publish_state("All fingerprints cleared");
-      enrolled_count_sensor->publish_state(0);
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("All fingerprints cleared");
+      }
+      if (enrolled_count_sensor_ != nullptr) {
+        enrolled_count_sensor_->publish_state(0);
+      }
     } else {
-      ESP_LOGE("fingerprint", "Clear database failed with code: %d", result);
-      status_sensor->publish_state("Clear failed!");
+      ESP_LOGE(TAG, "Clear database failed with code: %d", result);
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Clear failed!");
+      }
     }
   }
   
- private:
+ protected:
+  static constexpr const char *TAG = "fingerprint_sensor";
+  
   Adafruit_Fingerprint finger_ = Adafruit_Fingerprint(&Serial2);
   Preferences preferences_;
   std::map<int, std::string> fingerprint_names_;
@@ -196,6 +233,13 @@ class FingerprintSensor : public Component, public UARTDevice {
   unsigned long last_scan_time_ = 0;
   bool last_ring_state_ = false;
   
+  sensor::Sensor *match_id_sensor_{nullptr};
+  text_sensor::TextSensor *match_name_sensor_{nullptr};
+  sensor::Sensor *confidence_sensor_{nullptr};
+  sensor::Sensor *enrolled_count_sensor_{nullptr};
+  text_sensor::TextSensor *status_sensor_{nullptr};
+  binary_sensor::BinarySensor *ring_sensor_{nullptr};
+  
   void load_fingerprint_names() {
     // Load all stored fingerprint names from preferences
     for (int i = 1; i <= 200; i++) {
@@ -204,11 +248,11 @@ class FingerprintSensor : public Component, public UARTDevice {
         String name = preferences_.getString(key.c_str(), "");
         if (name.length() > 0) {
           fingerprint_names_[i] = name.c_str();
-          ESP_LOGD("fingerprint", "Loaded ID %d: %s", i, name.c_str());
+          ESP_LOGD(TAG, "Loaded ID %d: %s", i, name.c_str());
         }
       }
     }
-    ESP_LOGI("fingerprint", "Loaded %d fingerprint names from memory", fingerprint_names_.size());
+    ESP_LOGI(TAG, "Loaded %d fingerprint names from memory", fingerprint_names_.size());
   }
   
   void scan_fingerprint() {
@@ -227,10 +271,18 @@ class FingerprintSensor : public Component, public UARTDevice {
       if (last_ring_state_) {
         // Reset ring state
         last_ring_state_ = false;
-        ring_sensor->publish_state(false);
-        match_id_sensor->publish_state(-1);
-        match_name_sensor->publish_state("");
-        confidence_sensor->publish_state(0);
+        if (ring_sensor_ != nullptr) {
+          ring_sensor_->publish_state(false);
+        }
+        if (match_id_sensor_ != nullptr) {
+          match_id_sensor_->publish_state(-1);
+        }
+        if (match_name_sensor_ != nullptr) {
+          match_name_sensor_->publish_state("");
+        }
+        if (confidence_sensor_ != nullptr) {
+          confidence_sensor_->publish_state(0);
+        }
         
         // Return LED to ready
         finger_.LEDcontrol(FINGERPRINT_LED_BREATHING, 250, FINGERPRINT_LED_BLUE);
@@ -250,9 +302,9 @@ class FingerprintSensor : public Component, public UARTDevice {
     result = finger_.image2Tz();
     if (result != FINGERPRINT_OK) {
       if (result == FINGERPRINT_IMAGEMESS) {
-        ESP_LOGW("fingerprint", "Image too messy");
+        ESP_LOGW(TAG, "Image too messy");
       } else if (result == FINGERPRINT_FEATUREFAIL || result == FINGERPRINT_INVALIDIMAGE) {
-        ESP_LOGW("fingerprint", "Could not find fingerprint features");
+        ESP_LOGW(TAG, "Could not find fingerprint features");
       }
       return;
     }
@@ -265,7 +317,7 @@ class FingerprintSensor : public Component, public UARTDevice {
       int id = finger_.fingerID;
       int confidence = finger_.confidence;
       
-      ESP_LOGI("fingerprint", "Match found! ID: %d, Confidence: %d", id, confidence);
+      ESP_LOGI(TAG, "Match found! ID: %d, Confidence: %d", id, confidence);
       
       // Get name from stored names
       std::string name = "Unknown";
@@ -274,15 +326,25 @@ class FingerprintSensor : public Component, public UARTDevice {
       }
       
       // Publish to Home Assistant
-      match_id_sensor->publish_state(id);
-      match_name_sensor->publish_state(name);
-      confidence_sensor->publish_state(confidence);
-      ring_sensor->publish_state(false); // Not a ring event
+      if (match_id_sensor_ != nullptr) {
+        match_id_sensor_->publish_state(id);
+      }
+      if (match_name_sensor_ != nullptr) {
+        match_name_sensor_->publish_state(name);
+      }
+      if (confidence_sensor_ != nullptr) {
+        confidence_sensor_->publish_state(confidence);
+      }
+      if (ring_sensor_ != nullptr) {
+        ring_sensor_->publish_state(false); // Not a ring event
+      }
       
       // Purple LED for match
       finger_.LEDcontrol(FINGERPRINT_LED_ON, 0, FINGERPRINT_LED_PURPLE);
       
-      status_sensor->publish_state("Match: " + name);
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Match: " + name);
+      }
       last_ring_state_ = true;
       
       // Wait a bit before next scan
@@ -290,15 +352,25 @@ class FingerprintSensor : public Component, public UARTDevice {
       
     } else if (result == FINGERPRINT_NOTFOUND) {
       // No match found - ring doorbell!
-      ESP_LOGI("fingerprint", "No match found - ring doorbell!");
+      ESP_LOGI(TAG, "No match found - ring doorbell!");
       
       // Publish ring event to Home Assistant
-      ring_sensor->publish_state(true);
-      match_id_sensor->publish_state(-1);
-      match_name_sensor->publish_state("");
-      confidence_sensor->publish_state(0);
+      if (ring_sensor_ != nullptr) {
+        ring_sensor_->publish_state(true);
+      }
+      if (match_id_sensor_ != nullptr) {
+        match_id_sensor_->publish_state(-1);
+      }
+      if (match_name_sensor_ != nullptr) {
+        match_name_sensor_->publish_state("");
+      }
+      if (confidence_sensor_ != nullptr) {
+        confidence_sensor_->publish_state(0);
+      }
       
-      status_sensor->publish_state("Doorbell ring!");
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Doorbell ring!");
+      }
       
       // Trigger doorbell output (will be handled by automation in Home Assistant)
       last_ring_state_ = true;
@@ -308,12 +380,14 @@ class FingerprintSensor : public Component, public UARTDevice {
   }
   
   int perform_enrollment(int id) {
-    ESP_LOGI("fingerprint", "Starting enrollment for ID %d", id);
+    ESP_LOGI(TAG, "Starting enrollment for ID %d", id);
     
     // Enroll in 5 passes
     for (int pass = 1; pass <= 5; pass++) {
-      ESP_LOGI("fingerprint", "Enrollment pass %d/5", pass);
-      status_sensor->publish_state("Enrollment pass " + String(pass) + "/5: Place finger");
+      ESP_LOGI(TAG, "Enrollment pass %d/5", pass);
+      if (status_sensor_ != nullptr) {
+        status_sensor_->publish_state("Enrollment pass " + std::to_string(pass) + "/5: Place finger");
+      }
       
       // Wait for no finger on sensor (except first pass)
       if (pass > 1) {
@@ -332,18 +406,18 @@ class FingerprintSensor : public Component, public UARTDevice {
       while (result != FINGERPRINT_OK) {
         result = finger_.getImage();
         if (result == FINGERPRINT_PACKETRECIEVEERR || result == FINGERPRINT_IMAGEFAIL) {
-          ESP_LOGE("fingerprint", "Error capturing image");
+          ESP_LOGE(TAG, "Error capturing image");
           return result;
         }
         delay(50);
       }
       
-      ESP_LOGI("fingerprint", "Image captured");
+      ESP_LOGI(TAG, "Image captured");
       
       // Convert image to template
       result = finger_.image2Tz(pass);
       if (result != FINGERPRINT_OK) {
-        ESP_LOGE("fingerprint", "Error converting image: %d", result);
+        ESP_LOGE(TAG, "Error converting image: %d", result);
         return result;
       }
       
@@ -351,33 +425,40 @@ class FingerprintSensor : public Component, public UARTDevice {
       finger_.LEDcontrol(FINGERPRINT_LED_ON, 0, FINGERPRINT_LED_PURPLE);
       delay(1000);
       
-      ESP_LOGI("fingerprint", "Pass %d complete", pass);
+      ESP_LOGI(TAG, "Pass %d complete", pass);
     }
     
     // Create model from the 5 images
-    ESP_LOGI("fingerprint", "Creating fingerprint model");
-    status_sensor->publish_state("Creating fingerprint model...");
+    ESP_LOGI(TAG, "Creating fingerprint model");
+    if (status_sensor_ != nullptr) {
+      status_sensor_->publish_state("Creating fingerprint model...");
+    }
     
     uint8_t result = finger_.createModel();
     if (result != FINGERPRINT_OK) {
-      ESP_LOGE("fingerprint", "Error creating model: %d", result);
+      ESP_LOGE(TAG, "Error creating model: %d", result);
       if (result == FINGERPRINT_ENROLLMISMATCH) {
-        ESP_LOGE("fingerprint", "Fingerprints did not match");
+        ESP_LOGE(TAG, "Fingerprints did not match");
       }
       return result;
     }
     
     // Store model
-    ESP_LOGI("fingerprint", "Storing fingerprint model at ID %d", id);
-    status_sensor->publish_state("Storing fingerprint...");
+    ESP_LOGI(TAG, "Storing fingerprint model at ID %d", id);
+    if (status_sensor_ != nullptr) {
+      status_sensor_->publish_state("Storing fingerprint...");
+    }
     
     result = finger_.storeModel(id);
     if (result != FINGERPRINT_OK) {
-      ESP_LOGE("fingerprint", "Error storing model: %d", result);
+      ESP_LOGE(TAG, "Error storing model: %d", result);
       return result;
     }
     
-    ESP_LOGI("fingerprint", "Enrollment complete!");
+    ESP_LOGI(TAG, "Enrollment complete!");
     return 0;
   }
 };
+
+}  // namespace fingerprint_sensor
+}  // namespace esphome

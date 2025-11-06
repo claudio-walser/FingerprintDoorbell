@@ -1,15 +1,26 @@
 substitutions:
   device_name: doorbell-basement-door
   friendly_name: "Doorbell Basement Door"
-  
+    # API encryption key for Home Assistant
+  # Generate with: esphome fingerprint-doorbell.yaml run
+  api_encryption_key: "secret"
+
+  # OTA password for over-the-air updates
+  ota_password: "also-secret"
+
 esphome:
   name: ${device_name}
-  platform: ESP32
-  board: esp32doit-devkit-v1
+  friendly_name: ${friendly_name}
   includes:
-    - fingerprint_sensor.h
+    - /config/fingerprint_sensor.h
   libraries:
     - "adafruit/Adafruit Fingerprint Sensor Library@^2.1.0"
+
+esp32:
+  board: wemos_d1_mini32
+  framework:
+    type: esp-idf
+
 
 wifi:
   ssid: !secret wifi_ssid
@@ -26,13 +37,9 @@ captive_portal:
 logger:
   level: INFO
 
-# Enable Home Assistant API
-api:
-  encryption:
-    key: !secret api_encryption_key
-
 ota:
-  password: !secret ota_password
+  - platform: esphome
+    password: ${ota_password}
 
 web_server:
   port: 80
@@ -140,6 +147,8 @@ custom_component:
 # Services for Home Assistant
 # These allow you to call actions from Home Assistant
 api:
+  encryption:
+    key: ${api_encryption_key}
   services:
     # Enroll a new fingerprint
     - service: enroll_fingerprint
